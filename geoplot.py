@@ -40,6 +40,8 @@ import numpy as np
 from string import Template
 from agent_torch.core.helpers import get_by_path
 
+# HTML template for Cesium visualization
+# This template includes JavaScript code for rendering time-series data on a 3D globe
 geoplot_template = """
 <!doctype html>
 <html lang="en">
@@ -214,11 +216,39 @@ geoplot_template = """
 
 
 def read_var(state, var):
+    """
+    Extract a value from a nested state dictionary using a path string.
+    
+    Args:
+        state: The nested state dictionary to read from
+        var: A string path (e.g. "agents/consumers/coordinates") to the desired value
+    
+    Returns:
+        The value at the specified path in the state dictionary
+    """
     return get_by_path(state, re.split("/", var))
 
 
 class GeoPlot:
+    """
+    Visualization class that renders simulation state trajectories as geographic plots using Cesium.
+    
+    This class transforms simulation state data into GeoJSON format and generates an HTML
+    visualization that displays the data on a 3D globe using Cesium.
+    """
     def __init__(self, config, options):
+        """
+        Initialize the GeoPlot visualization engine.
+        
+        Args:
+            config: Simulation configuration dictionary
+            options: Dictionary containing visualization options including:
+                - cesium_token: API token for Cesium Ion
+                - step_time: Time in seconds between simulation steps
+                - coordinates: Path to entity position data in state
+                - feature: Path to entity property data in state
+                - visualization_type: Type of visualization (e.g., 'color' or 'size')
+        """
         self.config = config
         (
             self.cesium_token,
@@ -235,10 +265,25 @@ class GeoPlot:
         )
 
     def render(self, state_trajectory):
+        """
+        Generate a GeoJSON file and HTML visualization from state trajectory data.
+        
+        This method processes the state trajectory to extract position and property data
+        for each entity at each time step, then generates visualization files.
+        
+        Args:
+            state_trajectory: List of lists containing state snapshots over time
+                             [episode][step] = state
+        
+        Side effects:
+            - Creates a GeoJSON file with the simulation data
+            - Creates an HTML file with the Cesium visualization
+        """
         coords, values = [], []
         name = self.config["simulation_metadata"]["name"]
         geodata_path, geoplot_path = f"{name}.geojson", f"{name}.html"
 
+        # Extract coordinates and property values from each episode's final state
         for i in range(0, len(state_trajectory) - 1):
             final_state = state_trajectory[i][-1]
 
@@ -247,6 +292,7 @@ class GeoPlot:
                 np.array(read_var(final_state, self.entity_property)).flatten().tolist()
             )
 
+        # Generate timestamps for the visualization timeline
         start_time = pd.Timestamp.utcnow()
         timestamps = [
             start_time + pd.Timedelta(seconds=i * self.step_time)
@@ -256,6 +302,7 @@ class GeoPlot:
             )
         ]
 
+        # Construct GeoJSON feature collections for each entity
         geojsons = []
         for i, coord in enumerate(coords):
             features = []
@@ -265,19 +312,22 @@ class GeoPlot:
                         "type": "Feature",
                         "geometry": {
                             "type": "Point",
-                            "coordinates": [coord[1], coord[0]],
+                            "coordinates": [coord[1], coord[0]],  # [longitude, latitude]
                         },
                         "properties": {
                             "value": value_list[i],
                             "time": time.isoformat(),
+                            "id": i,  # Assign unique ID to each entity
                         },
                     }
                 )
             geojsons.append({"type": "FeatureCollection", "features": features})
 
+        # Write GeoJSON data to file
         with open(geodata_path, "w", encoding="utf-8") as f:
             json.dump(geojsons, f, ensure_ascii=False, indent=2)
 
+        # Generate HTML visualization using the template
         tmpl = Template(geoplot_template)
         with open(geoplot_path, "w", encoding="utf-8") as f:
             f.write(
